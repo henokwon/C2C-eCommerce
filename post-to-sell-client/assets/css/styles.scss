@@ -1,0 +1,15 @@
+// import font
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap");
+
+// import icons
+@import "./fonts/icons/icons.css";
+
+// import main
+@import "./main.scss";
+@import "./nav_bar.scss";
+@import "./buttons.scss";
+@import "./inputs.scss";
+@import "./advert/advert-preview.scss";
+@import "./public_pages.scss";
+@import "./skeleton/category.scss";
+@import "./notification.scss";

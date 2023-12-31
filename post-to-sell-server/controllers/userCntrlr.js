@@ -1,0 +1,334 @@
+const Users = require("../models/userModel");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const userCntrlr = {
+  // User registration
+  signUp: async (req, res) => {
+    try {
+      const { fName, lName, email, phone, contacts, password } = req.body; // accept values from the client.
+
+      const user = await Users.findOne({ email });
+      if (user)
+        return res.status(400).json({ msg: "A user with email exist!" });
+
+      if (password.length < 6)
+        return res
+          .status(400)
+          .json({ msg: "Password must be at least 6 character lengthen!" });
+
+      // password encryption
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      const newUser = new Users({
+        fName,
+        lName,
+        email,
+        phone,
+        role: "user",
+        contacts,
+        password: hashedPassword,
+      });
+
+      // Save the user to database
+      await newUser.save();
+      console.log(newUser);
+      // Then create a token for authentication then a user can signin authomaticaly
+      const accesstoken = createAccessToken({ id: newUser.id });
+      const refreshtoken = createRefreshToken({ id: newUser.id });
+
+      res.cookie("refreshtoken", refreshtoken, {
+        httpOnly: true,
+        path: "/edp/users/refresh_token",
+      });
+      newUser.password = null;
+      res.json({
+        accesstoken,
+        refreshtoken,
+        profile: newUser,
+      });
+    } catch (error) {
+      return res.status(500).json({ msg: error.message });
+    }
+  },
+
+  // Register Intenal user of the system: - admin
+  addInternaluser: async (req, res) => {
+    try {
+      const { fName, lName, email, contacts, password, role } = req.body; // accept values from the client.
+
+      const user = await Users.findOne({ email });
+      if (password.length < 6)
+        return res
+          .status(400)
+          .json({ msg: "Password must be at least 6 character lengthen!" });
+
+      // password encryption
+      const hashedPassword = await bcrypt.hash(password, 10);
+      if (user)
+        return res.status(400).json({ msg: "A user with email exist!" });
+      const newUser = new Users({
+        fName,
+        lName,
+        email,
+        password: hashedPassword,
+        role,
+        contacts,
+      });
+
+      // Save the user to database
+      await newUser.save();
+
+      res.json({ msg: role + " added successfully!" });
+    } catch (error) {
+      return res.status(500).json({ msg: error.message });
+    }
+  },
+
+  // Fetch all users
+  usersList: async (req, res) => {
+    try {
+      const users = await Users.find({ role: "user" }).select("-password");
+      res.json(users);
+    } catch (error) {
+      return res.status(500).json({ msg: err.message });
+    }
+  },
+
+  // Filter all Internal users
+  InternalUsersList: async (req, res) => {
+    try {
+      const internalUsers = await Users.find({
+        role: { $ne: "user" },
+      }).select("-password");
+      res.json(internalUsers);
+    } catch (error) {
+      return res.status(500).json({ msg: err.message });
+    }
+  },
+
+  // Edit user detail
+  editUser: async (req, res) => {
+    try {
+      const updatedData = await Users.findOneAndUpdate(
+        { _id: req.params.id },
+        ({ fName, lName, email, phone, contacts } = req.body),
+        { new: true }
+      );
+      res.json({
+        updated: updatedData,
+        msg: "User datail edited successfuly!",
+      });
+    } catch (error) {
+      res.status(500).json({ meg: error.msg });
+    }
+  },
+  editAdmins: async (req, res) => {
+    try {
+      await Users.findOneAndUpdate(
+        { _id: req.params.id },
+        ({ fName, lName, email, phone, role, contacts } = req.body)
+      );
+      res.json({ msg: "Datail edited successfuly!" });
+    } catch (error) {
+      return res.status(500).json({ msg: error.message });
+    }
+  },
+
+  // Delete regular user detail
+  deleteUser: async (req, res) => {
+    try {
+      const usr = await Users.findById(req.params.id);
+      if (!usr) return res.status(400).json({ msg: "User not found!" });
+      if (usr.role !== "user")
+        return res
+          .status(400)
+          .json({ msg: "You are not authorized to delete this user!" });
+
+      await Users.findByIdAndDelete({ _id: req.params.id });
+      res.json({ msg: "User has been deleted permanently!" });
+    } catch (error) {
+      return res.status(500).json({ msg: error.message });
+    }
+  },
+
+  // Signin
+  signIn: async (req, res) => {
+    try {
+      const { email, password } = req.body;
+
+      let user = await Users.findOne({ email });
+      if (!user) res.status(500).json({ msg: "User doesn't exist!" });
+      const passwordMatch = await bcrypt.compare(password, user.password);
+      if (!passwordMatch)
+        return res.status(400).json({ msg: "Invalid credintials!" });
+      if (user.accountStatus !== "ON") {
+        return res.status(400).json({
+          msg: "This account is not active, Please contact the admin!",
+        });
+      }
+
+      // If login success , create access token and refresh token
+      const accesstoken = createAccessToken({ id: user._id });
+      const refreshtoken = createRefreshToken({ id: user._id });
+
+      res.cookie("refreshtoken", refreshtoken, {
+        httpOnly: true,
+        path: "/user/refresh_token",
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7d
+      });
+      user.password = null;
+      res.json({
+        accesstoken,
+        refreshtoken,
+        profile: user,
+      });
+    } catch (error) {
+      return res.status(500).json({ msg: error.message });
+    }
+  },
+
+  // get user profile
+  getProfile: async (req, res) => {
+    try {
+      const profile = await Users.findById(req.user.id).select("-password");
+      res.json({ profile });
+    } catch (error) {
+      return res.status(500).json({ msg: err.message });
+    }
+  },
+  // Change user password
+  changeMypassword: async (req, res) => {
+    try {
+      // password encryption
+      const hashedNewPassword = await bcrypt.hash(req.body.newPassword, 10);
+
+      // Get the existing used data
+      const existingData = await Users.findById(req.user.id);
+      // compare the old password in database and that coming from user
+      const passwordMatch = await bcrypt.compare(
+        req.body.oldPassword,
+        existingData.password
+      );
+      if (!passwordMatch)
+        return res.status(400).json({ msg: "Incorrect old password!" });
+
+      await Users.findOneAndUpdate(
+        { _id: req.user.id },
+        { password: hashedNewPassword }
+      );
+      res.json({ msg: "Password changed successfully!" });
+    } catch (error) {
+      return res.status(500).json({ msg: err.message });
+    }
+  },
+
+  // Blocking user account
+  blockUserAccount: async (req, res) => {
+    try {
+      await Users.findOneAndUpdate(
+        { _id: req.params.id },
+        {
+          accountStatus: "OFF",
+        }
+      );
+      res.json({ msg: "Account has been disabled successfuly!" });
+    } catch (error) {
+      res.status(500).json({ msg: error.message });
+    }
+  },
+  // Acitvate uer account
+  activateUserAccount: async (req, res) => {
+    try {
+      await Users.findOneAndUpdate(
+        { _id: req.params.id },
+        {
+          accountStatus: "ON",
+        }
+      );
+      res.json({ msg: "Account has been activated successfuly!" });
+    } catch (error) {
+      res.status(500).json({ msg: error.message });
+    }
+  },
+
+  // Schedule notification
+  scheduleNotification: async (req, res) => {
+    try {
+      const updatedUser = await Users.findOneAndUpdate(
+        { _id: req.params.userId },
+        {
+          $push: {
+            notifyMeOnPost: {
+              $each: [req.body.notificationTarget],
+              $position: 0,
+            },
+          },
+        },
+        { new: true }
+      );
+      res.json({ profile: updatedUser, msg: "Notification scheduled!" });
+    } catch (error) {
+      res.status(500).json({ msg: error.message });
+    }
+  },
+
+  // Update user notification status
+  updateNotificationStatusToSeen: async (req, res) => {
+    try {
+      const updatedProfile = await Users.findOneAndUpdate(
+        { _id: req.params.userId, "notifications.status": "new" },
+
+        // Positional operator $ is a placeholder for the first matching array element
+        { $set: { "notifications.$.status": "seen" } }
+      );
+      console.log(updatedProfile?.email + " Notifications updated!");
+    } catch (error) {
+      console.log(error);
+    }
+  },
+
+  // Delete user notifications from
+  deleteNotification: async (req, res) => {
+    try {
+      await Users.findOneAndUpdate(
+        { _id: req.params.userId },
+        { $pull: { notifications: { id: req.body.notificationId } } }
+      );
+      res.json({
+        msg: "Notification removed successfully!",
+      });
+    } catch (error) {
+      res.status(500).json({ msg: error.message });
+    }
+  },
+
+  // Refresh token
+  refreshToken: (req, res) => {
+    try {
+      // const rf_token = req.cookies.refreshtoken;
+      const rf_token = req.body.token;
+      console.log("token :- " + rf_token);
+      if (!rf_token)
+        return res.status(400).json({ msg: "Please Login or Register" });
+
+      jwt.verify(rf_token, process.env.REFRESH_TOKEN_SECRET, (error, user) => {
+        if (error) return res.status(400).json({ msg: "Unathorized token!" });
+
+        const accesstoken = createAccessToken({ id: user.id });
+
+        res.json({ accesstoken });
+      });
+    } catch (error) {
+      return res.status(500).json({ msg: error.message });
+    }
+  },
+};
+const createAccessToken = (userId) => {
+  return jwt.sign(userId, process.env.ACCESS_TOKEN_SECRET, { expiresIn: "5d" });
+};
+const createRefreshToken = (userId) => {
+  return jwt.sign(userId, process.env.REFRESH_TOKEN_SECRET, {
+    expiresIn: "7d",
+  });
+};
+module.exports = userCntrlr;
