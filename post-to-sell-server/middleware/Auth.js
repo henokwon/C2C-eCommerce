@@ -1,37 +1,26 @@
 const jwt = require("jsonwebtoken");
 const Users = require("../models/userModel");
 
-const checkPerimssion = async (perimssions, user) => {
-  const profile = await Users.findById(user.id).select("-password");
-  if (profile.accountStatus !== "ON") return false;
-  return perimssions.includes(profile.role);
-};
-
-const Auth = (perimssions) => {
-  return (req, res, next) => {
-    try {
-      const token = req.header("Authorization");
-      if (!token) return res.status(400).json({ msg: "Invalid Authorization" });
-
-      // Check token validity and expiration
-      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, async (err, user) => {
-        if (err)
-          return res
-            .status(400)
-            .json({ msg: "Expired or Invalid Authorization" });
-
-        const authorized = await checkPerimssion(perimssions, user);
-        // Check if the user is authorized
-        if (!authorized)
-          return res.status(400).json({ msg: "Unauthorized access!" });
-
-        req.user = user;
-        next();
-      });
-    } catch (err) {
-      return res.status(500).json({ msg: err.message });
+module.exports = (permissions) => async (req, res, next) => {
+  const header = req.header("Authorization");
+  if (!header) return res.status(401).json({ msg: "Authentication required" });
+  try {
+    const token = header.replace(/^Bearer\s+/i, "");
+    const claims = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, { algorithms: ["HS256"] });
+    if (!claims || typeof claims.id !== "string") {
+      return res.status(401).json({ msg: "Invalid credentials" });
     }
-  };
+    const profile = await Users.findById(claims.id).select("-password");
+    if (!profile || profile.accountStatus !== "ON") {
+      return res.status(401).json({ msg: "Account is unavailable" });
+    }
+    if (!permissions.includes(profile.role)) {
+      return res.status(403).json({ msg: "Permission denied" });
+    }
+    req.user = { id: String(profile._id), role: profile.role };
+    return next();
+  } catch (error) {
+    const invalid = ["TokenExpiredError", "JsonWebTokenError", "NotBeforeError", "CastError"].includes(error.name);
+    return res.status(invalid ? 401 : 500).json({ msg: invalid ? "Invalid credentials" : "Authentication failed" });
+  }
 };
-
-module.exports = Auth;

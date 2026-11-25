@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const userCntrlr = require("../controllers/userCntrlr");
 const Auth = require("../middleware/Auth");
+const RequireSelf = require("../middleware/RequireSelf");
 
 // Signup new user
 router.post("/signup", userCntrlr.signUp);
@@ -17,7 +18,7 @@ router.get(
 );
 
 // Edit a user detail
-router.put("/edit/:id", Auth(["user"]), userCntrlr.editUser);
+router.put("/edit/:id", Auth(["user"]), RequireSelf("id"), userCntrlr.editUser);
 router.put("/edit/amins/:id", Auth(["admin"]), userCntrlr.editAdmins);
 
 // Delete a user
@@ -46,6 +47,7 @@ router.put("/block_account/:id", Auth(["admin"]), userCntrlr.blockUserAccount);
 router.put(
   "/schedule_notification/:userId",
   Auth(["user"]),
+  RequireSelf("userId"),
   userCntrlr.scheduleNotification
 );
 
@@ -53,6 +55,7 @@ router.put(
 router.put(
   "/update_notification_status/:userId",
   Auth(["user"]),
+  RequireSelf("userId"),
   userCntrlr.updateNotificationStatusToSeen
 );
 
@@ -60,6 +63,7 @@ router.put(
 router.put(
   "/delete_notification/:userId",
   Auth(["user"]),
+  RequireSelf("userId"),
   userCntrlr.deleteNotification
 );
 // Refresh token

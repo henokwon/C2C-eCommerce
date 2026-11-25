@@ -1,6 +1,7 @@
 const Users = require("../models/userModel");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const { allowedUpdate } = require("../security/updates");
 const userCntrlr = {
   // User registration
   signUp: async (req, res) => {
@@ -31,14 +32,15 @@ const userCntrlr = {
 
       // Save the user to database
       await newUser.save();
-      console.log(newUser);
       // Then create a token for authentication then a user can signin authomaticaly
       const accesstoken = createAccessToken({ id: newUser.id });
       const refreshtoken = createRefreshToken({ id: newUser.id });
 
       res.cookie("refreshtoken", refreshtoken, {
         httpOnly: true,
-        path: "/edp/users/refresh_token",
+        path: "/api/users/refresh_token",
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
       });
       newUser.password = null;
       res.json({
@@ -109,24 +111,31 @@ const userCntrlr = {
   // Edit user detail
   editUser: async (req, res) => {
     try {
+      if (String(req.params.id) !== String(req.user.id)) {
+        return res.status(403).json({ msg: "You may only modify your own account" });
+      }
+      const update = allowedUpdate(req.body, ["fName", "lName", "email", "phone", "contacts"]);
       const updatedData = await Users.findOneAndUpdate(
-        { _id: req.params.id },
-        ({ fName, lName, email, phone, contacts } = req.body),
-        { new: true }
-      );
+        { _id: req.user.id },
+        { $set: update },
+        { new: true, runValidators: true }
+      ).select("-password");
+      if (!updatedData) return res.status(404).json({ msg: "User not found" });
       res.json({
         updated: updatedData,
         msg: "User datail edited successfuly!",
       });
     } catch (error) {
-      res.status(500).json({ meg: error.msg });
+      res.status(error.status || 400).json({ msg: "Unable to update profile" });
     }
   },
   editAdmins: async (req, res) => {
     try {
+      const update = allowedUpdate(req.body, ["fName", "lName", "email", "phone", "role", "contacts"]);
       await Users.findOneAndUpdate(
         { _id: req.params.id },
-        ({ fName, lName, email, phone, role, contacts } = req.body)
+        { $set: update },
+        { runValidators: true }
       );
       res.json({ msg: "Datail edited successfuly!" });
     } catch (error) {
@@ -157,7 +166,7 @@ const userCntrlr = {
       const { email, password } = req.body;
 
       let user = await Users.findOne({ email });
-      if (!user) res.status(500).json({ msg: "User doesn't exist!" });
+      if (!user) return res.status(401).json({ msg: "Invalid credentials" });
       const passwordMatch = await bcrypt.compare(password, user.password);
       if (!passwordMatch)
         return res.status(400).json({ msg: "Invalid credintials!" });
@@ -173,7 +182,9 @@ const userCntrlr = {
 
       res.cookie("refreshtoken", refreshtoken, {
         httpOnly: true,
-        path: "/user/refresh_token",
+        path: "/api/users/refresh_token",
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7d
       });
       user.password = null;
@@ -266,7 +277,8 @@ const userCntrlr = {
         },
         { new: true }
       );
-      res.json({ profile: updatedUser, msg: "Notification scheduled!" });
+      const { password, ...safeProfile } = updatedUser.toObject();
+      res.json({ profile: safeProfile, msg: "Notification scheduled!" });
     } catch (error) {
       res.status(500).json({ msg: error.message });
     }
@@ -281,7 +293,7 @@ const userCntrlr = {
         // Positional operator $ is a placeholder for the first matching array element
         { $set: { "notifications.$.status": "seen" } }
       );
-      console.log(updatedProfile?.email + " Notifications updated!");
+      return res.json({ msg: "Notifications updated" });
     } catch (error) {
       console.log(error);
     }
@@ -307,7 +319,6 @@ const userCntrlr = {
     try {
       // const rf_token = req.cookies.refreshtoken;
       const rf_token = req.body.token;
-      console.log("token :- " + rf_token);
       if (!rf_token)
         return res.status(400).json({ msg: "Please Login or Register" });
 
