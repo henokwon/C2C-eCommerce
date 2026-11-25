@@ -6,8 +6,7 @@
 
 The workflow uses Node.js 22 and the server's npm lockfile to check JavaScript
 syntax and run isolated HTTP security regressions on pull requests and pushes
-to `main`. The badge reports the default branch workflow status and becomes
-available after the workflow runs there.
+to `main`.
 
 ```bash
 cd post-to-sell-server
