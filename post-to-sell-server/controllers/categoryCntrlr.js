@@ -1,5 +1,6 @@
 const Categories = require("../models/categoryModel");
 const fs = require("fs");
+const { resolveUpload } = require("../security/upload-files");
 
 const categoryCntrlr = {
   // Add new  products category
@@ -84,8 +85,10 @@ const categoryCntrlr = {
 };
 // Remove image from the uploads/products/cetegories
 const removeCategoryImage = async (imagePath) => {
-  await fs.unlink(imagePath, function (err) {
-    return true;
-  });
+  try {
+    await fs.promises.unlink(resolveUpload(imagePath, "category"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
 };
 module.exports = categoryCntrlr;

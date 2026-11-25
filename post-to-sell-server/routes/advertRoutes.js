@@ -32,7 +32,7 @@ router.put(
 router.delete(
   "/delete/:id",
   Auth(["admin", "user"]),
-  advertCntrlr.deleteAdvert(["admin", "user"])
+  advertCntrlr.deleteAdvert()
 );
 
 // Approve Advert

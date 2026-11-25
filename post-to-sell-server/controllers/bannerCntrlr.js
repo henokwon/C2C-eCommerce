@@ -1,6 +1,8 @@
 const Banners = require("../models/bannerModel");
 
 const fs = require("fs");
+const { allowedUpdate } = require("../security/updates");
+const { resolveUpload } = require("../security/upload-files");
 const bannerCntrlr = {
   addBanner: async (req, res) => {
     console.log(req.file);
@@ -30,7 +32,8 @@ const bannerCntrlr = {
     try {
       await Banners.findOneAndUpdate(
         { _id: req.params.id },
-        ({ title, sequence, duration } = req.body)
+        { $set: allowedUpdate(req.body, ["title", "sequence", "duration"]) },
+        { runValidators: true }
       );
       res.json({ msg: "Banner edited successfuly!" });
     } catch (error) {
@@ -67,8 +70,10 @@ const bannerCntrlr = {
   },
 };
 const removeBanner = async (bannerPath) => {
-  await fs.unlink(bannerPath, function (err) {
-    return true;
-  });
+  try {
+    await fs.promises.unlink(resolveUpload(bannerPath, "banner"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
 };
 module.exports = bannerCntrlr;

@@ -2,6 +2,8 @@ const Products = require("../models/productModel");
 const Users = require("../models/userModel");
 const { v4: uuidv4 } = require("uuid");
 const fs = require("fs");
+const { allowedUpdate } = require("../security/updates");
+const { resolveUpload } = require("../security/upload-files");
 
 const productCntrlr = {
   addProduct: async (req, res) => {
@@ -131,25 +133,15 @@ const productCntrlr = {
 
       const updatedData = await Products.findOneAndUpdate(
         { _id: req.params.id },
-        ({
-          productName,
-          brand,
-          category,
-          subCategory,
-          price,
-          currentPrice,
-          discription,
-          sizes,
-          colors,
-          postType,
-          tag,
-          contacts,
-        } = req.body),
-        { new: true }
+        { $set: allowedUpdate(req.body, [
+          "productName", "brand", "category", "subCategory", "price", "currentPrice",
+          "discription", "sizes", "colors", "postType", "tag", "contacts",
+        ]) },
+        { new: true, runValidators: true }
       );
       res.json({ data: updatedData, msg: "Product edited successfully!" });
     } catch (error) {
-      res.status(500).json({ msg: error.message });
+      res.status(error.status || 400).json({ msg: "Unable to update product" });
     }
   },
 
@@ -160,10 +152,13 @@ const productCntrlr = {
       if (!validUser)
         return res.status(400).json({ msg: "Perimission denied!" });
 
-      // req.body.url is the url of old image
-      removeImage(req.body.url);
+      const product = await Products.findById(req.params.id);
+      if (!product.images.includes(req.body.url)) {
+        return res.status(400).json({ msg: "Image does not belong to this product" });
+      }
+      await removeImage(req.body.url);
       // req.params.id is Id of the product
-      removeImageURL(req.params.id, req.body.url);
+      await removeImageURL(req.params.id, req.body.url);
       await addImageURL(
         req.params.id,
         "uploads/products/" + req.file.filename,
@@ -202,19 +197,14 @@ const productCntrlr = {
     }
   },
 
-  deleteProduct: (permissions) => {
+  deleteProduct: () => {
     return async (req, res) => {
       try {
-        const validUser = await validatProductOwner(
-          req.user.id,
-          req.params.id,
-          permissions
-        );
-
-        if (!validUser)
-          return res.status(400).json({ msg: "Perimission denied!" });
-
         const product = await Products.findById(req.params.id);
+        if (!product) return res.status(404).json({ msg: "Product not found" });
+        if (req.user.role !== "admin" && product.userId !== req.user.id) {
+          return res.status(403).json({ msg: "Permission denied" });
+        }
 
         for (let i = 0; i < product.images.length; i++) {
           await removeImage(product.images[i]);
@@ -256,21 +246,31 @@ const productCntrlr = {
   // Update product paymet status
   updateProductPaymentStatus: async (req, res) => {
     try {
+      if (req.user.role !== "admin") {
+        return res.status(403).json({ msg: "Payment confirmation requires an administrator" });
+      }
+      if (!Number.isInteger(req.body.payFor) || req.body.payFor < 1 || req.body.payFor > 12) {
+        return res.status(400).json({ msg: "payFor must be an integer from 1 to 12 months" });
+      }
       var expireDate = new Date();
       if (req.body.payFor) {
         expireDate.setMonth(expireDate.getMonth() + req.body.payFor);
         const updatedData = await Products.findOneAndUpdate(
-          { _id: req.params.id },
+          { _id: req.params.id, postPayment: 0 },
           {
             postPayment: 1,
             status: "active",
             postExpireDate: expireDate,
           },
-          { new: true }
+          { new: true, runValidators: true }
         );
-        res.json({ data: updatedData, msg: "Payment done!" });
-
-        await prepareScheduleNotification(updatedData);
+        if (!updatedData) {
+          return res.status(409).json({ msg: "Product is missing or payment is already recorded" });
+        }
+        await prepareScheduleNotification(updatedData).catch(() => {
+          console.error("Payment recorded; notification delivery failed");
+        });
+        return res.json({ data: updatedData, msg: "Payment recorded by administrator" });
       }
     } catch (error) {
       res.status(500).json({ msg: error.message });
@@ -463,10 +463,10 @@ const pushNotificationToUser = async (notification, userId) => {
 };
 
 // This function checks who is allowed to delte the product (the owner and the admin)
-const validatProductOwner = async (userId, productId, permissions) => {
+const validatProductOwner = async (userId, productId) => {
   const product = await Products.findById(productId);
   if (product) {
-    if (product.userId === userId || permissions?.includes("admin")) {
+    if (product.userId === userId) {
       return true;
     } else {
       return false;
@@ -506,10 +506,11 @@ removeImageURL = async (prdct_id, URL) => {
 };
 
 const removeImage = async (imagesPath) => {
-  // This function removes the image from the folder where it is stored
-  await fs.unlink(imagesPath, function (err) {
-    return true;
-  });
+  try {
+    await fs.promises.unlink(resolveUpload(imagesPath, "product"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
 };
 
 const differenceInTwoDates = (LargerDate, smallerDate) => {

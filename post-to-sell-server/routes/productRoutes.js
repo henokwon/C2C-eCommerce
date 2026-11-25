@@ -34,7 +34,7 @@ router.put(
 router.delete(
   "/delete/:id",
   Auth(["admin", "user"]),
-  productCntrlr.deleteProduct(["admin", "user"])
+  productCntrlr.deleteProduct()
 );
 router.put(
   "/delete/image/:id",
@@ -43,7 +43,7 @@ router.put(
 );
 router.put(
   "/payment/update_status/:id",
-  Auth(["user"]),
+  Auth(["admin"]),
   productCntrlr.updateProductPaymentStatus
 );
 // Approve product
